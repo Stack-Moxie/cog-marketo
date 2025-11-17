@@ -98,12 +98,26 @@ export class BulkCreateOrUpdateLeadByFieldStep extends BaseStep implements StepI
                 passedLeadArray.push({ ...leadArray[leadArrayIndex], id: result.id });
               }
             } else if (result.reasons && result.reasons[0]) {
-              failedLeadArray.push({ ...leadArray[leadArrayIndex], message: result.reasons[0].message });
+              const errorMessage = result.reasons[0].message;
+              // Check if this is the "Multiple lead match lookup criteria" error
+              // This should be treated as a pass since one of the leads actually gets updated
+              if (errorMessage && errorMessage.toLowerCase().includes('multiple lead match lookup criteria')) {
+                // Add to passed leads with a message indicating the special case
+                const passedLead: any = { ...leadArray[leadArrayIndex] };
+                if (result.id) {
+                  passedLead.id = result.id;
+                }
+                passedLead.message = `Multiple leads matched (one was updated): ${errorMessage}`;
+                passedLeadArray.push(passedLead);
+              } else {
+                // Regular error, add to failed leads
+                failedLeadArray.push({ ...leadArray[leadArrayIndex], message: errorMessage });
 
-              // also preserve the original csv entry;
-              const match = csvRows[leadArrayIndex];
-              if (match) {
-                failArrayOriginal.push(match);
+                // also preserve the original csv entry;
+                const match = csvRows[leadArrayIndex];
+                if (match) {
+                  failArrayOriginal.push(match);
+                }
               }
 
             } else {
