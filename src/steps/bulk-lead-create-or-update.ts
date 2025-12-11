@@ -40,6 +40,19 @@ export class BulkCreateOrUpdateLeadByFieldStep extends BaseStep implements StepI
       description: 'Message for explanation of pass',
     }],
   }, {
+    id: 'duplicateLeads',
+    type: RecordDefinition.Type.TABLE,
+    fields: [{
+      field: 'email',
+      type: FieldDefinition.Type.EMAIL,
+      description: 'Email of Marketo Lead',
+    }, {
+      field: 'message',
+      type: FieldDefinition.Type.STRING,
+      description: 'Multiple lead match lookup criteria message',
+    }],
+    dynamicFields: false,
+  }, {
     id: 'failedLeads',
     type: RecordDefinition.Type.TABLE,
     fields: [{
@@ -71,6 +84,7 @@ export class BulkCreateOrUpdateLeadByFieldStep extends BaseStep implements StepI
     const records = [];
     try {
       const passedLeadArray = [];
+      const duplicateLeadArray = [];
       const failedLeadArray = [];
 
       // we should parse out the original CSV array if provided, or handle it if missing
@@ -102,13 +116,13 @@ export class BulkCreateOrUpdateLeadByFieldStep extends BaseStep implements StepI
               // Check if this is the "Multiple lead match lookup criteria" error
               // This should be treated as a pass since one of the leads actually gets updated
               if (errorMessage && errorMessage.toLowerCase().includes('multiple lead match lookup criteria')) {
-                // Add to passed leads with a message indicating the special case
-                const passedLead: any = { ...leadArray[leadArrayIndex] };
+                // Add to duplicate leads with the error message
+                const duplicateLead: any = { ...leadArray[leadArrayIndex] };
                 if (result.id) {
-                  passedLead.id = result.id;
+                  duplicateLead.id = result.id;
                 }
-                passedLead.message = `Multiple leads matched (one was updated): ${errorMessage}`;
-                passedLeadArray.push(passedLead);
+                duplicateLead.message = errorMessage;
+                duplicateLeadArray.push(duplicateLead);
               } else {
                 // Regular error, add to failed leads
                 failedLeadArray.push({ ...leadArray[leadArrayIndex], message: errorMessage });
@@ -142,13 +156,21 @@ export class BulkCreateOrUpdateLeadByFieldStep extends BaseStep implements StepI
         }
       });
 
-      const returnedLeadsCount = passedLeadArray.length + failedLeadArray.length;
+      const successfulLeadsCount = passedLeadArray.length + duplicateLeadArray.length;
+      const returnedLeadsCount = successfulLeadsCount + failedLeadArray.length;
 
       if (returnedLeadsCount === 0) {
         return this.fail('No leads were created or updated in Marketo', [], []);
       } else if (leadArray.length !== returnedLeadsCount) {
-        records.push(this.createTable('passedLeads', 'Leads Created or Updated', passedLeadArray));
-        records.push(this.createTable('failedLeads', 'Leads Failed', failedLeadArray));
+        if (passedLeadArray.length > 0) {
+          records.push(this.createTable('passedLeads', 'Leads Created or Updated', passedLeadArray));
+        }
+        if (duplicateLeadArray.length > 0) {
+          records.push(this.createTable('duplicateLeads', 'Duplicate Leads (one was updated)', duplicateLeadArray));
+        }
+        if (failedLeadArray.length > 0) {
+          records.push(this.createTable('failedLeads', 'Leads Failed', failedLeadArray));
+        }
         records.push(this.keyValue('failedOriginal', 'Objects Failed (Original format)', { array: JSON.stringify(failArrayOriginal) }));
         return this.fail(
           'Only %d of %d leads were successfully sent to Marketo',
@@ -156,14 +178,24 @@ export class BulkCreateOrUpdateLeadByFieldStep extends BaseStep implements StepI
           records,
         );
       } else if (!failedLeadArray.length) {
-        records.push(this.createTable('passedLeads', 'Leads Created or Updated', passedLeadArray));
+        if (passedLeadArray.length > 0) {
+          records.push(this.createTable('passedLeads', 'Leads Created or Updated', passedLeadArray));
+        }
+        if (duplicateLeadArray.length > 0) {
+          records.push(this.createTable('duplicateLeads', 'Duplicate Leads (one was updated)', duplicateLeadArray));
+        }
         return this.pass(
           'Successfully created or updated %d leads',
-          [passedLeadArray.length],
+          [successfulLeadsCount],
           records,
         );
       } else {
-        records.push(this.createTable('passedLeads', 'Leads Created or Updated', passedLeadArray));
+        if (passedLeadArray.length > 0) {
+          records.push(this.createTable('passedLeads', 'Leads Created or Updated', passedLeadArray));
+        }
+        if (duplicateLeadArray.length > 0) {
+          records.push(this.createTable('duplicateLeads', 'Duplicate Leads (one was updated)', duplicateLeadArray));
+        }
         records.push(this.createTable('failedLeads', 'Leads Failed', failedLeadArray));
         records.push(this.keyValue('failedOriginal', 'Objects Failed (Original format)', { array: JSON.stringify(failArrayOriginal) }));
         return this.fail(
