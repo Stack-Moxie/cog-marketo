@@ -212,4 +212,168 @@ describe('BulkCreateOrUpdateLeadByFieldStep', () => {
     expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.ERROR);
   });
 
+  it('should respond with success and include duplicateLeads table for multiple lead match errors', async () => {
+    const duplicateErrorMessage: string = 'Multiple lead match lookup criteria';
+    clientWrapperStub.bulkCreateOrUpdateLead.returns(Promise.resolve([{
+      success: true,
+      result: [
+        {
+          status: 'created',
+          id: 123321,
+        },
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: duplicateErrorMessage,
+            },
+          ],
+        },
+        {
+          status: 'updated',
+          id: 123323,
+        },
+      ],
+    }]));
+    protoStep.setData(Struct.fromJavaScript({
+      leads: {
+        1: {
+          email: 'sampleEmail1@example.com',
+        },
+        2: {
+          email: 'sampleEmail2@example.com',
+        },
+        3: {
+          email: 'sampleEmail3@example.com',
+        },
+      },
+    }));
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.PASSED);
+    
+    // Check that duplicateLeads table exists
+    const records = response.getRecordsList();
+    const duplicateLeadsRecord = records.find(record => record.getId() === 'duplicateLeads');
+    expect(duplicateLeadsRecord).to.exist;
+    
+    // Verify the duplicate lead has the correct message
+    const duplicateLeadsTable = duplicateLeadsRecord.getTable();
+    const rows = duplicateLeadsTable.getRowsList();
+    expect(rows).to.have.lengthOf(1);
+  });
+
+  it('should respond with success for all duplicate leads when all have multiple match errors', async () => {
+    const duplicateErrorMessage: string = 'Multiple lead match lookup criteria';
+    clientWrapperStub.bulkCreateOrUpdateLead.returns(Promise.resolve([{
+      success: true,
+      result: [
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: duplicateErrorMessage,
+            },
+          ],
+        },
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: duplicateErrorMessage,
+            },
+          ],
+        },
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: duplicateErrorMessage,
+            },
+          ],
+        },
+      ],
+    }]));
+    protoStep.setData(Struct.fromJavaScript({
+      leads: {
+        1: {
+          email: 'sampleEmail1@example.com',
+        },
+        2: {
+          email: 'sampleEmail2@example.com',
+        },
+        3: {
+          email: 'sampleEmail3@example.com',
+        },
+      },
+    }));
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.PASSED);
+    expect(response.getMessageArgsList()[0].getNumberValue()).to.equal(3);
+    
+    // Check that duplicateLeads table exists with all 3 leads
+    const records = response.getRecordsList();
+    const duplicateLeadsRecord = records.find(record => record.getId() === 'duplicateLeads');
+    expect(duplicateLeadsRecord).to.exist;
+    
+    const duplicateLeadsTable = duplicateLeadsRecord.getTable();
+    const rows = duplicateLeadsTable.getRowsList();
+    expect(rows).to.have.lengthOf(3);
+  });
+
+  it('should respond with fail for mixed results with regular errors and duplicates', async () => {
+    const duplicateErrorMessage: string = 'Multiple lead match lookup criteria';
+    const regularErrorMessage: string = 'Invalid email address';
+    clientWrapperStub.bulkCreateOrUpdateLead.returns(Promise.resolve([{
+      success: true,
+      result: [
+        {
+          status: 'created',
+          id: 123321,
+        },
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: duplicateErrorMessage,
+            },
+          ],
+        },
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: regularErrorMessage,
+            },
+          ],
+        },
+      ],
+    }]));
+    protoStep.setData(Struct.fromJavaScript({
+      leads: {
+        1: {
+          email: 'sampleEmail1@example.com',
+        },
+        2: {
+          email: 'sampleEmail2@example.com',
+        },
+        3: {
+          email: 'sampleEmail3@example.com',
+        },
+      },
+    }));
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.FAILED);
+    expect(response.getMessageArgsList()[0].getNumberValue()).to.equal(1); // 1 failed lead
+    
+    // Check that both passedLeads, duplicateLeads, and failedLeads tables exist
+    const records = response.getRecordsList();
+    const passedLeadsRecord = records.find(record => record.getId() === 'passedLeads');
+    const duplicateLeadsRecord = records.find(record => record.getId() === 'duplicateLeads');
+    const failedLeadsRecord = records.find(record => record.getId() === 'failedLeads');
+    
+    expect(passedLeadsRecord).to.exist;
+    expect(duplicateLeadsRecord).to.exist;
+    expect(failedLeadsRecord).to.exist;
+  });
+
 });
