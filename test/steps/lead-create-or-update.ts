@@ -135,4 +135,169 @@ describe('CreateOrUpdateLeadByFieldStep', () => {
     expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.ERROR);
   });
 
+  it('should respond with fail if multiple leads match and updateMostRecentMatch is false', async () => {
+    const duplicateErrorMessage: string = 'Multiple lead match lookup criteria';
+    clientWrapperStub.createOrUpdateLead.returns(Promise.resolve({
+      success: true,
+      result: [
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: duplicateErrorMessage,
+            },
+          ],
+        },
+      ],
+    }));
+    protoStep.setData(Struct.fromJavaScript({
+      lead: {
+        email: 'duplicate@example.com',
+      },
+      updateMostRecentMatch: false,
+    }));
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.FAILED);
+    expect(response.getMessageArgsList()[0].getStringValue()).to.equal(duplicateErrorMessage);
+  });
+
+  it('should update most recent lead when multiple leads match and updateMostRecentMatch is true', async () => {
+    const duplicateErrorMessage: string = 'Multiple lead match lookup criteria';
+    const email: string = 'duplicate@example.com';
+    
+    clientWrapperStub.createOrUpdateLead.returns(Promise.resolve({
+      success: true,
+      result: [
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: duplicateErrorMessage,
+            },
+          ],
+        },
+      ],
+    }));
+    
+    // Mock findLeadByEmail to return multiple leads
+    clientWrapperStub.findLeadByEmail.onFirstCall().returns(Promise.resolve({
+      success: true,
+      result: [
+        {
+          id: 123321,
+          email,
+          updatedAt: '2023-01-01T00:00:00Z',
+          createdAt: '2023-01-01T00:00:00Z',
+        },
+        {
+          id: 123322,
+          email,
+          updatedAt: '2023-06-01T00:00:00Z',
+          createdAt: '2023-01-01T00:00:00Z',
+        },
+        {
+          id: 123323,
+          email,
+          updatedAt: '2023-03-01T00:00:00Z',
+          createdAt: '2023-01-01T00:00:00Z',
+        },
+      ],
+    }));
+    
+    clientWrapperStub.updateLead = sinon.stub();
+    clientWrapperStub.updateLead.returns(Promise.resolve({
+      success: true,
+      result: [
+        {
+          status: 'updated',
+          id: 123322,
+        },
+      ],
+    }));
+    
+    // Mock the second findLeadByEmail call (after update)
+    clientWrapperStub.findLeadByEmail.onSecondCall().returns(Promise.resolve({
+      success: true,
+      result: [
+        {
+          id: 123322,
+          email,
+          updatedAt: '2023-06-01T00:00:00Z',
+          firstName: 'Updated',
+        },
+      ],
+    }));
+    
+    protoStep.setData(Struct.fromJavaScript({
+      lead: {
+        email,
+        firstName: 'Updated',
+      },
+      updateMostRecentMatch: true,
+    }));
+    
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.PASSED);
+    expect(clientWrapperStub.updateLead).to.have.been.calledOnce;
+    // Verify it updated the most recent lead (ID 123322 with updatedAt 2023-06-01)
+    expect(clientWrapperStub.updateLead.firstCall.args[1]).to.equal('id');
+    expect(clientWrapperStub.updateLead.firstCall.args[2]).to.equal('123322');
+  });
+
+  it('should fail if updateMostRecentMatch is true but update fails', async () => {
+    const duplicateErrorMessage: string = 'Multiple lead match lookup criteria';
+    const email: string = 'duplicate@example.com';
+    
+    clientWrapperStub.createOrUpdateLead.returns(Promise.resolve({
+      success: true,
+      result: [
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: duplicateErrorMessage,
+            },
+          ],
+        },
+      ],
+    }));
+    
+    clientWrapperStub.findLeadByEmail.returns(Promise.resolve({
+      success: true,
+      result: [
+        {
+          id: 123321,
+          email,
+          updatedAt: '2023-01-01T00:00:00Z',
+        },
+      ],
+    }));
+    
+    clientWrapperStub.updateLead = sinon.stub();
+    clientWrapperStub.updateLead.returns(Promise.resolve({
+      success: true,
+      result: [
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: 'Update failed',
+            },
+          ],
+        },
+      ],
+    }));
+    
+    protoStep.setData(Struct.fromJavaScript({
+      lead: {
+        email,
+        firstName: 'Updated',
+      },
+      updateMostRecentMatch: true,
+    }));
+    
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.FAILED);
+  });
+
 });

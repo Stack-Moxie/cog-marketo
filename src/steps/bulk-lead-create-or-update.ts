@@ -75,6 +75,7 @@ export class BulkCreateOrUpdateLeadByFieldStep extends BaseStep implements StepI
     const stepData: any = step.getData().toJavaScript();
     const partitionId = stepData.partitionId || 1;
     const leads = stepData.leads;
+    const updateMostRecentMatch: boolean = stepData.updateMostRecentMatch || false;
     const leadArray = [];
 
     Object.values(leads).forEach((lead) => {
@@ -86,6 +87,7 @@ export class BulkCreateOrUpdateLeadByFieldStep extends BaseStep implements StepI
       const passedLeadArray = [];
       const duplicateLeadArray = [];
       const failedLeadArray = [];
+      const leadsToResolve = []; // Store leads that need resolution
 
       // we should parse out the original CSV array if provided, or handle it if missing
       const csvArray = stepData.csvArray ? JSON.parse(stepData.csvArray) : [];
@@ -114,15 +116,19 @@ export class BulkCreateOrUpdateLeadByFieldStep extends BaseStep implements StepI
             } else if (result.reasons && result.reasons[0]) {
               const errorMessage = result.reasons[0].message;
               // Check if this is the "Multiple lead match lookup criteria" error
-              // This should be treated as a pass since one of the leads actually gets updated
               if (errorMessage && errorMessage.toLowerCase().includes('multiple lead match lookup criteria')) {
-                // Add to duplicate leads with the error message
-                const duplicateLead: any = { ...leadArray[leadArrayIndex] };
-                if (result.id) {
-                  duplicateLead.id = result.id;
+                if (updateMostRecentMatch) {
+                  // Store for resolution later
+                  leadsToResolve.push({ lead: leadArray[leadArrayIndex], index: leadArrayIndex });
+                } else {
+                  // Add to duplicate leads with the error message (current behavior)
+                  const duplicateLead: any = { ...leadArray[leadArrayIndex] };
+                  if (result.id) {
+                    duplicateLead.id = result.id;
+                  }
+                  duplicateLead.message = errorMessage;
+                  duplicateLeadArray.push(duplicateLead);
                 }
-                duplicateLead.message = errorMessage;
-                duplicateLeadArray.push(duplicateLead);
               } else {
                 // Regular error, add to failed leads
                 failedLeadArray.push({ ...leadArray[leadArrayIndex], message: errorMessage });
@@ -155,6 +161,63 @@ export class BulkCreateOrUpdateLeadByFieldStep extends BaseStep implements StepI
           });
         }
       });
+
+      // Resolve leads with multiple matches if updateMostRecentMatch is true
+      if (updateMostRecentMatch && leadsToResolve.length > 0) {
+        for (const { lead, index } of leadsToResolve) {
+          try {
+            // Find all leads matching the email
+            const matchingLeads: any = await this.client.findLeadByEmail(lead.email, null, partitionId);
+
+            if (matchingLeads.success && matchingLeads.result && matchingLeads.result.length > 0) {
+              // Sort by updatedAt descending to get the most recent lead
+              const sortedLeads = matchingLeads.result.sort((a, b) => {
+                const dateA = new Date(a.updatedAt || a.createdAt || 0);
+                const dateB = new Date(b.updatedAt || b.createdAt || 0);
+                return dateB.getTime() - dateA.getTime();
+              });
+
+              const mostRecentLead = sortedLeads[0];
+
+              // Update the most recent lead by ID
+              // Create a new lead object with the ID to ensure proper update
+              const leadWithId = { ...lead, id: mostRecentLead.id };
+              const updateData: any = await this.client.updateLead(leadWithId, 'id', mostRecentLead.id.toString(), partitionId);
+
+              if (updateData.success && updateData.result && updateData.result[0] && updateData.result[0].status !== 'skipped') {
+                // Add to passed leads with the updated lead ID
+                passedLeadArray.push({ ...lead, id: mostRecentLead.id, message: `Updated most recent of ${matchingLeads.result.length} matching leads` });
+              } else {
+                // If update failed, add to failed leads
+                failedLeadArray.push({
+                  ...lead,
+                  message: updateData.result && updateData.result[0] && updateData.result[0].reasons
+                    ? updateData.result[0].reasons[0].message
+                    : 'Failed to update most recent matching lead',
+                });
+                const match = csvRows[index];
+                if (match) {
+                  failArrayOriginal.push(match);
+                }
+              }
+            } else {
+              // If no matching leads found, add to failed leads
+              failedLeadArray.push({ ...lead, message: 'Unable to find matching leads' });
+              const match = csvRows[index];
+              if (match) {
+                failArrayOriginal.push(match);
+              }
+            }
+          } catch (resolveError) {
+            // If resolution fails, add to failed leads
+            failedLeadArray.push({ ...lead, message: `Error resolving multiple matches: ${resolveError.message}` });
+            const match = csvRows[index];
+            if (match) {
+              failArrayOriginal.push(match);
+            }
+          }
+        }
+      }
 
       const successfulLeadsCount = passedLeadArray.length + duplicateLeadArray.length;
       const returnedLeadsCount = successfulLeadsCount + failedLeadArray.length;

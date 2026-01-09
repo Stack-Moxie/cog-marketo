@@ -6,7 +6,7 @@ import { Step, FieldDefinition, StepDefinition, RecordDefinition, StepRecord } f
 export class UpdateLeadStep extends BaseStep implements StepInterface {
 
   protected stepName: string = 'Update a Marketo lead';
-  protected stepExpression: string = 'update a marketo lead';
+  protected stepExpression: string = 'update an existing marketo lead';
   protected stepType: StepDefinition.Type = StepDefinition.Type.ACTION;
   protected actionList: string[] = ['update'];
   protected targetObject: string = 'Lead';
