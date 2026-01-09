@@ -28,7 +28,7 @@ describe('UpdateLeadStep', () => {
     const stepDef: StepDefinition = stepUnderTest.getDefinition();
     expect(stepDef.getStepId()).to.equal('UpdateLeadStep');
     expect(stepDef.getName()).to.equal('Update a Marketo lead');
-    expect(stepDef.getExpression()).to.equal('update a marketo lead');
+    expect(stepDef.getExpression()).to.equal('update an existing marketo lead');
     expect(stepDef.getType()).to.equal(StepDefinition.Type.ACTION);
   });
 

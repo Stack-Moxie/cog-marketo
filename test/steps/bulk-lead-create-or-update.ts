@@ -376,4 +376,170 @@ describe('BulkCreateOrUpdateLeadByFieldStep', () => {
     expect(failedLeadsRecord).to.exist;
   });
 
+  it('should update most recent lead when updateMostRecentMatch is true', async () => {
+    const duplicateErrorMessage: string = 'Multiple lead match lookup criteria';
+    clientWrapperStub.bulkCreateOrUpdateLead.returns(Promise.resolve([{
+      success: true,
+      result: [
+        {
+          status: 'created',
+          id: 123321,
+        },
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: duplicateErrorMessage,
+            },
+          ],
+        },
+        {
+          status: 'updated',
+          id: 123323,
+        },
+      ],
+    }]));
+    
+    // Mock findLeadByEmail to return multiple leads for the duplicate
+    clientWrapperStub.findLeadByEmail = sinon.stub();
+    clientWrapperStub.findLeadByEmail.returns(Promise.resolve({
+      success: true,
+      result: [
+        {
+          id: 999,
+          email: 'sampleEmail2@example.com',
+          updatedAt: '2023-01-01T00:00:00Z',
+        },
+        {
+          id: 888,
+          email: 'sampleEmail2@example.com',
+          updatedAt: '2023-06-01T00:00:00Z',
+        },
+      ],
+    }));
+    
+    clientWrapperStub.updateLead = sinon.stub();
+    clientWrapperStub.updateLead.returns(Promise.resolve({
+      success: true,
+      result: [
+        {
+          status: 'updated',
+          id: 888,
+        },
+      ],
+    }));
+    
+    protoStep.setData(Struct.fromJavaScript({
+      leads: {
+        1: {
+          email: 'sampleEmail1@example.com',
+        },
+        2: {
+          email: 'sampleEmail2@example.com',
+        },
+        3: {
+          email: 'sampleEmail3@example.com',
+        },
+      },
+      updateMostRecentMatch: true,
+    }));
+    
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.PASSED);
+    expect(clientWrapperStub.updateLead).to.have.been.calledOnce;
+    // Verify it updated the most recent lead (ID 888)
+    expect(clientWrapperStub.updateLead.firstCall.args[2]).to.equal('888');
+    
+    // Check that all leads are in passedLeads (no duplicateLeads table)
+    const records = response.getRecordsList();
+    const passedLeadsRecord = records.find(record => record.getId() === 'passedLeads');
+    const duplicateLeadsRecord = records.find(record => record.getId() === 'duplicateLeads');
+    
+    expect(passedLeadsRecord).to.exist;
+    expect(duplicateLeadsRecord).to.not.exist;
+  });
+
+  it('should handle mixed results with updateMostRecentMatch true where some resolutions fail', async () => {
+    const duplicateErrorMessage: string = 'Multiple lead match lookup criteria';
+    clientWrapperStub.bulkCreateOrUpdateLead.returns(Promise.resolve([{
+      success: true,
+      result: [
+        {
+          status: 'created',
+          id: 123321,
+        },
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: duplicateErrorMessage,
+            },
+          ],
+        },
+        {
+          status: 'skipped',
+          reasons: [
+            {
+              message: duplicateErrorMessage,
+            },
+          ],
+        },
+      ],
+    }]));
+    
+    // Mock findLeadByEmail - first call succeeds, second call fails
+    clientWrapperStub.findLeadByEmail = sinon.stub();
+    clientWrapperStub.findLeadByEmail.onFirstCall().returns(Promise.resolve({
+      success: true,
+      result: [
+        {
+          id: 888,
+          email: 'sampleEmail2@example.com',
+          updatedAt: '2023-06-01T00:00:00Z',
+        },
+      ],
+    }));
+    clientWrapperStub.findLeadByEmail.onSecondCall().returns(Promise.resolve({
+      success: true,
+      result: [], // No matching leads found
+    }));
+    
+    clientWrapperStub.updateLead = sinon.stub();
+    clientWrapperStub.updateLead.returns(Promise.resolve({
+      success: true,
+      result: [
+        {
+          status: 'updated',
+          id: 888,
+        },
+      ],
+    }));
+    
+    protoStep.setData(Struct.fromJavaScript({
+      leads: {
+        1: {
+          email: 'sampleEmail1@example.com',
+        },
+        2: {
+          email: 'sampleEmail2@example.com',
+        },
+        3: {
+          email: 'sampleEmail3@example.com',
+        },
+      },
+      updateMostRecentMatch: true,
+    }));
+    
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.FAILED);
+    
+    // Check that we have both passed and failed leads
+    const records = response.getRecordsList();
+    const passedLeadsRecord = records.find(record => record.getId() === 'passedLeads');
+    const failedLeadsRecord = records.find(record => record.getId() === 'failedLeads');
+    
+    expect(passedLeadsRecord).to.exist;
+    expect(failedLeadsRecord).to.exist;
+  });
+
 });

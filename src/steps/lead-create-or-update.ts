@@ -42,6 +42,7 @@ export class CreateOrUpdateLeadByFieldStep extends BaseStep implements StepInter
     const stepData: any = step.getData().toJavaScript();
     const partitionId = stepData.partitionId || 1;
     const lead = stepData.lead;
+    const updateMostRecentMatch: boolean = stepData.updateMostRecentMatch || false;
 
     try {
       const data: any = await this.client.createOrUpdateLead(lead, partitionId);
@@ -61,8 +62,60 @@ export class CreateOrUpdateLeadByFieldStep extends BaseStep implements StepInter
         ]);
       } else {
         if (data.result && data.result[0] && data.result[0].reasons && data.result[0].reasons[0]) {
+          const errorMessage = data.result[0].reasons[0].message;
+
+          // Check if this is the "Multiple lead match lookup criteria" error and updateMostRecentMatch is true
+          if (updateMostRecentMatch && errorMessage && errorMessage.toLowerCase().includes('multiple lead match lookup criteria')) {
+            try {
+              // Find all leads matching the email
+              const matchingLeads: any = await this.client.findLeadByEmail(lead.email, null, partitionId);
+
+              if (matchingLeads.success && matchingLeads.result && matchingLeads.result.length > 0) {
+                // Sort by updatedAt descending to get the most recent lead
+                const sortedLeads = matchingLeads.result.sort((a, b) => {
+                  const dateA = new Date(a.updatedAt || a.createdAt || 0);
+                  const dateB = new Date(b.updatedAt || b.createdAt || 0);
+                  return dateB.getTime() - dateA.getTime();
+                });
+
+                const mostRecentLead = sortedLeads[0];
+
+                // Update the most recent lead by ID
+                // Create a new lead object with the ID to ensure proper update
+                const leadWithId = { ...lead, id: mostRecentLead.id };
+                const updateData: any = await this.client.updateLead(leadWithId, 'id', mostRecentLead.id.toString(), partitionId);
+
+                if (updateData.success && updateData.result && updateData.result[0] && updateData.result[0].status !== 'skipped') {
+                  // Fetch the updated lead to get all current data
+                  const updatedLead: any = await this.client.findLeadByEmail(lead.email, null, partitionId);
+                  const finalLead = updatedLead.result.find(l => l.id === mostRecentLead.id) || updatedLead.result[0];
+
+                  const record = this.createRecord(finalLead);
+                  const passingRecord = this.createPassingRecord(finalLead, Object.keys(lead));
+                  const orderedRecord = this.createOrderedRecord(finalLead, stepData['__stepOrder']);
+
+                  return this.pass(
+                    'Successfully updated most recent lead (ID: %s) from %d matching leads',
+                    [mostRecentLead.id, matchingLeads.result.length],
+                    [record, passingRecord, orderedRecord],
+                  );
+                } else {
+                  return this.fail('Unable to update most recent lead: %s', [
+                    updateData.result && updateData.result[0] && updateData.result[0].reasons
+                      ? updateData.result[0].reasons[0].message
+                      : 'Update failed',
+                  ]);
+                }
+              } else {
+                return this.fail('Unable to find matching leads for: %s', [lead.email]);
+              }
+            } catch (resolveError) {
+              return this.error('Error resolving multiple lead match: %s', [resolveError.toString()]);
+            }
+          }
+
           return this.fail('Unable to create or update lead: %s', [
-            data.result[0].reasons[0].message,
+            errorMessage,
           ]);
         } else {
           return this.fail('Unable to create or update lead: %s', [
