@@ -370,4 +370,75 @@ describe('CheckBulkApiUsageStep', () => {
     const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
     expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.PASSED);
   });
+
+  it('should add previousUsageMB to this user\'s usage when accumulating across multiple users', async () => {
+    const nowISO = new Date().toISOString();
+
+    // This user has 100MB, previous users accumulated 200MB → combined 300MB < 90% of 500MB
+    protoStep.setData(Struct.fromJavaScript({
+      exportLimit: 500,
+      previousUsageMB: 200,
+    }));
+
+    clientWrapperStub.getBulkExportLeadJobs.returns(Promise.resolve({
+      success: true,
+      result: [{ finishedAt: nowISO, status: 'Completed', fileSize: 100 * 1024 * 1024 }],
+    }));
+    clientWrapperStub.getBulkExportActivityJobs.returns(Promise.resolve({ success: true, result: [] }));
+    clientWrapperStub.getBulkExportProgramMemberJobs.returns(Promise.resolve({ success: true, result: [] }));
+    clientWrapperStub.getCustomObjectTypes.returns(Promise.resolve({ success: true, result: [] }));
+
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    // 300MB combined < 450MB (90% of 500MB) — should pass
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.PASSED);
+  });
+
+  it('should fail when combined usage with previousUsageMB exceeds 90% of the limit', async () => {
+    const nowISO = new Date().toISOString();
+
+    // This user has 100MB, previous users accumulated 360MB → combined 460MB > 90% of 500MB
+    protoStep.setData(Struct.fromJavaScript({
+      exportLimit: 500,
+      previousUsageMB: 360,
+    }));
+
+    clientWrapperStub.getBulkExportLeadJobs.returns(Promise.resolve({
+      success: true,
+      result: [{ finishedAt: nowISO, status: 'Completed', fileSize: 100 * 1024 * 1024 }],
+    }));
+    clientWrapperStub.getBulkExportActivityJobs.returns(Promise.resolve({ success: true, result: [] }));
+    clientWrapperStub.getBulkExportProgramMemberJobs.returns(Promise.resolve({ success: true, result: [] }));
+    clientWrapperStub.getCustomObjectTypes.returns(Promise.resolve({ success: true, result: [] }));
+
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    // 460MB combined >= 450MB (90% of 500MB) — should fail
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.FAILED);
+  });
+
+  it('should output combined total as bulkApiUsage so the next step can accumulate further', async () => {
+    const nowISO = new Date().toISOString();
+
+    // This user: 100MB. Previous: 150MB. Expected output token: 250MB
+    protoStep.setData(Struct.fromJavaScript({
+      exportLimit: 500,
+      previousUsageMB: 150,
+    }));
+
+    clientWrapperStub.getBulkExportLeadJobs.returns(Promise.resolve({
+      success: true,
+      result: [{ finishedAt: nowISO, status: 'Completed', fileSize: 100 * 1024 * 1024 }],
+    }));
+    clientWrapperStub.getBulkExportActivityJobs.returns(Promise.resolve({ success: true, result: [] }));
+    clientWrapperStub.getBulkExportProgramMemberJobs.returns(Promise.resolve({ success: true, result: [] }));
+    clientWrapperStub.getCustomObjectTypes.returns(Promise.resolve({ success: true, result: [] }));
+
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.PASSED);
+
+    // The record should carry the combined 250MB so the next step's
+    // {{marketo.bulkExports.bulkApiUsage}} token resolves to 250
+    const record = response.getRecordsList()[0];
+    const recordData = record.getKeyValue().toJavaScript();
+    expect(recordData['bulkApiUsage']).to.equal(250);
+  });
 });

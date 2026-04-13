@@ -15,6 +15,11 @@ export class CheckBulkApiUsageStep extends BaseStep implements StepInterface {
     type: FieldDefinition.Type.NUMERIC,
     optionality: FieldDefinition.Optionality.OPTIONAL,
     description: 'Your daily bulk export limit in MB (default: 500)',
+  }, {
+    field: 'previousUsageMB',
+    type: FieldDefinition.Type.NUMERIC,
+    optionality: FieldDefinition.Optionality.OPTIONAL,
+    description: 'MB used by previous API users (use {{marketo.bulkExports.bulkApiUsage}} to chain steps across multiple users)',
   }];
   protected expectedRecords: ExpectedRecord[] = [{
     id: 'bulkExports',
@@ -31,6 +36,7 @@ export class CheckBulkApiUsageStep extends BaseStep implements StepInterface {
     const stepData: any = step.getData().toJavaScript();
     const exportLimitMB = stepData.exportLimit || 500;
     const exportLimitBytes = exportLimitMB * 1024 * 1024;
+    const previousUsageBytes = (stepData.previousUsageMB || 0) * 1024 * 1024;
 
     try {
       // Get all export jobs from the different bulk API endpoints
@@ -89,18 +95,36 @@ export class CheckBulkApiUsageStep extends BaseStep implements StepInterface {
         }
       }
 
-      // Convert to MB for display
-      const totalMBUsed = (totalBytesToday / (1024 * 1024)).toFixed(2);
-      const percentUsage = ((totalBytesToday / exportLimitBytes) * 100).toFixed(2);
+      // Convert to MB for display. If previousUsageBytes is set, the combined total is
+      // what gets compared against the limit and output as the token for the next step.
+      const thisUserMBUsed = (totalBytesToday / (1024 * 1024)).toFixed(2);
+      const combinedBytes = totalBytesToday + previousUsageBytes;
+      const combinedMBUsed = (combinedBytes / (1024 * 1024)).toFixed(2);
+      const percentUsage = ((combinedBytes / exportLimitBytes) * 100).toFixed(2);
+      const isAccumulating = previousUsageBytes > 0;
 
-      if (totalBytesToday < (0.9 * exportLimitBytes)) {
-        return this.pass('You have used %s MB of your %d MB daily bulk export limit, which is %s%% of your quota. This is based on %d completed export job(s) today.',
-                         [totalMBUsed, exportLimitMB, percentUsage, jobCount],
-                         [this.keyValue('bulkExports', 'Checked Bulk API Usage', { bulkApiUsage: parseFloat(totalMBUsed) })]);
+      const passMessage = isAccumulating
+        ? 'This user has used %s MB today. Combined with previous users, total usage is %s MB of your %d MB daily limit (%s%%). Based on %d completed export job(s) today.'
+        : 'You have used %s MB of your %d MB daily bulk export limit, which is %s%% of your quota. This is based on %d completed export job(s) today.';
+      const failMessage = isAccumulating
+        ? 'This user has used %s MB today. Combined with previous users, total usage is %s MB of your %d MB daily limit (%s%%). You are approaching or have exceeded your daily limit. Based on %d completed export job(s) today.'
+        : 'You have used %s MB of your %d MB daily bulk export limit, which is %s%% of your quota. This is based on %d completed export job(s) today. You are approaching or have exceeded your daily limit.';
+
+      const passArgs = isAccumulating
+        ? [thisUserMBUsed, combinedMBUsed, exportLimitMB, percentUsage, jobCount]
+        : [combinedMBUsed, exportLimitMB, percentUsage, jobCount];
+      const failArgs = isAccumulating
+        ? [thisUserMBUsed, combinedMBUsed, exportLimitMB, percentUsage, jobCount]
+        : [combinedMBUsed, exportLimitMB, percentUsage, jobCount];
+
+      // Always output the combined total so the next step's {{marketo.bulkExports.bulkApiUsage}}
+      // token carries the running accumulated total across all chained users.
+      const record = this.keyValue('bulkExports', 'Checked Bulk API Usage', { bulkApiUsage: parseFloat(combinedMBUsed) });
+
+      if (combinedBytes < (0.9 * exportLimitBytes)) {
+        return this.pass(passMessage, passArgs, [record]);
       }
-      return this.fail('You have used %s MB of your %d MB daily bulk export limit, which is %s%% of your quota. This is based on %d completed export job(s) today. You are approaching or have exceeded your daily limit.',
-                       [totalMBUsed, exportLimitMB, percentUsage, jobCount],
-                       [this.keyValue('bulkExports', 'Checked Bulk API Usage', { bulkApiUsage: parseFloat(totalMBUsed) })]);
+      return this.fail(failMessage, failArgs, [record]);
     } catch (e) {
       return this.error('There was a problem checking the Bulk API Usage: %s', [e.toString()]);
     }
