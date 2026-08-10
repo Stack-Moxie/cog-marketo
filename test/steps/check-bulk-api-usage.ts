@@ -239,12 +239,64 @@ describe('CheckBulkApiUsageStep', () => {
   });
 
   it('should respond with an error if the marketo client throws an error', async () => {
-    clientWrapperStub.getBulkExportLeadJobs.throws('any error');
+    const httpError: any = new Error('Unknown Marketo error');
+    httpError.name = 'HttpError';
+    httpError.code = 502;
+    clientWrapperStub.getBulkExportLeadJobs.rejects(httpError);
+    clientWrapperStub.getBulkExportActivityJobs.returns(Promise.resolve({ success: true, result: [] }));
+    clientWrapperStub.getBulkExportProgramMemberJobs.returns(Promise.resolve({ success: true, result: [] }));
+    clientWrapperStub.getCustomObjectTypes.returns(Promise.resolve({ success: true, result: [] }));
     protoStep.setData(Struct.fromJavaScript({
       exportLimit: 500,
     }));
     const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
     expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.ERROR);
+    const args = response.getMessageArgsList().map(a => a.toJavaScript()).join(' ');
+    expect(args).to.contain('lead exports');
+    expect(args).to.contain('HTTP 502');
+  });
+
+  it('should keep counting when one bulk endpoint fails and still error if under the limit', async () => {
+    const nowISO = new Date().toISOString();
+    const httpError: any = new Error('Unknown Marketo error');
+    httpError.code = 503;
+
+    protoStep.setData(Struct.fromJavaScript({ exportLimit: 500 }));
+
+    clientWrapperStub.getBulkExportLeadJobs.returns(Promise.resolve({
+      success: true,
+      result: [{ finishedAt: nowISO, status: 'Completed', fileSize: 50 * 1024 * 1024 }],
+    }));
+    clientWrapperStub.getBulkExportActivityJobs.rejects(httpError);
+    clientWrapperStub.getBulkExportProgramMemberJobs.returns(Promise.resolve({ success: true, result: [] }));
+    clientWrapperStub.getCustomObjectTypes.returns(Promise.resolve({ success: true, result: [] }));
+
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.ERROR);
+    expect(response.getMessageFormat()).to.contain('incomplete');
+    expect(response.getRecordsList()).to.have.lengthOf(0);
+  });
+
+  it('should fail on over-limit even when a later endpoint errors', async () => {
+    const nowISO = new Date().toISOString();
+    const httpError: any = new Error('Unknown Marketo error');
+    httpError.code = 502;
+
+    protoStep.setData(Struct.fromJavaScript({ exportLimit: 500 }));
+
+    // 460MB from leads alone is already over 90% of 500MB
+    clientWrapperStub.getBulkExportLeadJobs.returns(Promise.resolve({
+      success: true,
+      result: [{ finishedAt: nowISO, status: 'Completed', fileSize: 460 * 1024 * 1024 }],
+    }));
+    clientWrapperStub.getBulkExportActivityJobs.rejects(httpError);
+    clientWrapperStub.getBulkExportProgramMemberJobs.returns(Promise.resolve({ success: true, result: [] }));
+    clientWrapperStub.getCustomObjectTypes.returns(Promise.resolve({ success: true, result: [] }));
+
+    const response: RunStepResponse = await stepUnderTest.executeStep(protoStep);
+    expect(response.getOutcome()).to.equal(RunStepResponse.Outcome.FAILED);
+    expect(response.getMessageFormat()).to.contain('Actual usage may be higher');
+    expect(response.getRecordsList()).to.have.lengthOf(1);
   });
 
   it('should use default limit of 500MB when not specified', async () => {
