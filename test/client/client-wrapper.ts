@@ -369,6 +369,40 @@ describe('ClientWrapper', () => {
     expect(marketoClientStub._connection.get).to.have.been.calledWith('/v1/stats/usage/last7days.json');
   });
 
+  it('getBulkExportLeadJobs uses bulk URL and query _method', async () => {
+    metadata = new Metadata();
+    metadata.add('endpoint', 'https://123-abc-456.mktorest.com');
+    metadata.add('clientId', 'a-client-id');
+    metadata.add('clientSecret', 'a-client-secret');
+    clientWrapperUnderTest = new ClientWrapper(metadata, marketoConstructorStub, 0);
+    marketoClientStub._connection._options = {
+      endpoint: 'https://123-abc-456.mktorest.com/rest',
+    };
+    marketoClientStub._connection.get.returns(Promise.resolve({ success: true, result: [] }));
+
+    await clientWrapperUnderTest.getBulkExportLeadJobs();
+
+    expect(marketoClientStub._connection.get).to.have.been.calledWith(
+      'https://123-abc-456.mktorest.com/bulk/v1/leads/export.json',
+      { query: { _method: 'GET' } },
+    );
+  });
+
+  it('bulkUrl strips a trailing slash after /rest', () => {
+    metadata = new Metadata();
+    metadata.add('endpoint', 'https://123-abc-456.mktorest.com');
+    metadata.add('clientId', 'a-client-id');
+    metadata.add('clientSecret', 'a-client-secret');
+    clientWrapperUnderTest = new ClientWrapper(metadata, marketoConstructorStub, 0);
+    marketoClientStub._connection._options = {
+      endpoint: 'https://123-abc-456.mktorest.com/rest/',
+    };
+
+    expect(clientWrapperUnderTest.bulkUrl('activities/export.json')).to.equal(
+      'https://123-abc-456.mktorest.com/bulk/v1/activities/export.json',
+    );
+  });
+
   it('getFoldersById', () => {
     clientWrapperUnderTest = new ClientWrapper(metadata, marketoConstructorStub, 0);
     const expectedId = '123';
