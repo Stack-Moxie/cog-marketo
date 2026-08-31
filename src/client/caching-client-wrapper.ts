@@ -247,6 +247,14 @@ class CachingClientWrapper {
     return await this.client.getActivitiesByLeadId(nextPageToken, leadId, activityId);
   }
 
+  public getNotificationInbox() {
+    return this.client.getNotificationInbox();
+  }
+
+  public async getNotificationMessages(inbox: string) {
+    return await this.client.getNotificationMessages(inbox);
+  }
+
   public async getDailyApiUsage() {
     return await this.client.getDailyApiUsage();
   }
