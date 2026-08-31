@@ -62,15 +62,21 @@ export class CheckMarketoNotificationsStep extends BaseStep implements StepInter
         return matcher.test(haystack);
       });
 
-      const table = this.table('messages', 'Marketo Notifications', {
-        subject: 'Subject',
-        from: 'From',
-        receivedAt: 'Received',
-      }, matching.map((msg: any) => ({
+      const rows = matching.map((msg: any) => ({
         subject: msg.subject,
         from: msg.from,
         receivedAt: msg.receivedAt,
-      })));
+      }));
+      const table = this.table(
+        'messages',
+        'Marketo Notifications',
+        {
+          subject: 'Subject',
+          from: 'From',
+          receivedAt: 'Received',
+        },
+        rows,
+      );
 
       if (matching.length > 0) {
         return this.fail(
