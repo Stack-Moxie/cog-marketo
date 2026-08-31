@@ -12,6 +12,7 @@ import {
   EmailAwareMixin,
   ProgramAwareMixin,
   StaticListAwareMixin,
+  NotificationAwareMixin,
 } from './mixins';
 
 class ClientWrapper {
@@ -32,6 +33,7 @@ class ClientWrapper {
 
   client: Marketo;
   delayInSeconds: number;
+  notificationInbox: string;
 
   constructor(auth: grpc.Metadata, clientConstructor = Marketo, delayInSeconds = 3, mailgunCredentials: Record<string, any> = {}) {
     this.client = new clientConstructor({
@@ -43,6 +45,8 @@ class ClientWrapper {
     });
     this.delayInSeconds = delayInSeconds;
     this.client.mailgunCredentials = mailgunCredentials;
+    const inboxMeta = auth.get('notificationInbox');
+    this.notificationInbox = (inboxMeta && inboxMeta[0]) ? String(inboxMeta[0]) : '';
   }
 }
 
@@ -55,10 +59,11 @@ interface ClientWrapper extends
   ProgramAwareMixin,
   FolderAwareMixin,
   EmailAwareMixin,
-  StaticListAwareMixin {
+  StaticListAwareMixin,
+  NotificationAwareMixin {
   _connection: any;
 }
-applyMixins(ClientWrapper, [LeadAwareMixin, SmartCampaignAwareMixin, ActivityAwareMixin, CustomObjectAwareMixin, StatsAwareMixin, ProgramAwareMixin, FolderAwareMixin, EmailAwareMixin, StaticListAwareMixin]);
+applyMixins(ClientWrapper, [LeadAwareMixin, SmartCampaignAwareMixin, ActivityAwareMixin, CustomObjectAwareMixin, StatsAwareMixin, ProgramAwareMixin, FolderAwareMixin, EmailAwareMixin, StaticListAwareMixin, NotificationAwareMixin]);
 
 function applyMixins(derivedCtor: any, baseCtors: any[]) {
   baseCtors.forEach((baseCtor) => {

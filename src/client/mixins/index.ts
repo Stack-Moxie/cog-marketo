@@ -7,3 +7,4 @@ export * from './email-aware';
 export * from './folder-aware';
 export * from './static-list-aware';
 export * from './program-aware';
+export * from './notification-aware';
